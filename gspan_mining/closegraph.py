@@ -16,6 +16,7 @@ from graph import VACANT_VERTEX_LABEL
 
 import pandas as pd
 from memory_profiler import profile
+from bugFinder import reduce_graph_dataset
 
 def record_timestamp(func):
     """Record timestamp before and after call of `func`."""
@@ -242,7 +243,8 @@ class closeGraph(object):
                  is_undirected=True,
                  verbose=False,
                  visualize=False,
-                 where=False):
+                 where=False,
+                 graphs_to_keep=None):
         """Initialize closeGraph instance."""
         self._database_file_name = database_file_name
         self.graphs = dict()
@@ -262,6 +264,7 @@ class closeGraph(object):
         self._visualize = visualize
         self._where = where
         self.timestamps = dict()
+        self._graphs_to_keep = graphs_to_keep
         if self._max_num_vertices < self._min_num_vertices:
             print('Max number of vertices can not be smaller than '
                   'min number of that.\n'
@@ -325,6 +328,10 @@ class closeGraph(object):
             # adapt to input files that do not end with 't # -1'
             if tgraph is not None:
                 self.graphs[graph_cnt] = tgraph
+
+        #Testing
+        self.graphs = reduce_graph_dataset(self.graphs,self._graphs_to_keep)
+        #EndTesting
         return self
 
     @record_timestamp

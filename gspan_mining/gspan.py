@@ -1,4 +1,4 @@
-"""Implementation of closeGraph."""
+"""Implementation of gSpan."""
 from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
@@ -13,8 +13,11 @@ from graph import AUTO_EDGE_ID
 from graph import Graph
 from graph import VACANT_GRAPH_ID
 from graph import VACANT_VERTEX_LABEL
+from filterSubgraphs import filter_nonmaximal_subgraphs
 
 import pandas as pd
+from memory_profiler import profile
+from bugFinder import reduce_graph_dataset
 
 
 def record_timestamp(func):
@@ -131,6 +134,28 @@ class PDFS(object):
         self.edge = edge
         self.prev = prev
 
+    def __eq__(self, other):
+        """Check equivalence of PDFS."""
+        if(self is None):
+            return other is None
+        elif(other is None):
+            return self is None
+        else:
+            gidMatch = self.gid == other.gid
+            edgeMatch = self.edge == other.edge
+            prevMatch = False
+            if(self.prev is not None):
+                prevMatch = self.prev == other.prev
+            else:
+                if(other.prev is None):
+                    prevMatch = True
+
+            return gidMatch and edgeMatch and prevMatch
+
+    def __ne__(self, other):
+        """Check if not equal."""
+        return not self.__eq__(other)
+
 
 class Projected(list):
     """Projected is a list of PDFS.
@@ -180,7 +205,7 @@ class History(object):
 
 
 class gSpan(object):
-    """`closeGraph` algorithm."""
+    """`gSpan` algorithm."""
 
     def __init__(self,
                  database_file_name,
@@ -191,8 +216,9 @@ class gSpan(object):
                  is_undirected=True,
                  verbose=False,
                  visualize=False,
-                 where=False):
-        """Initialize closeGraph instance."""
+                 where=False,
+                 graphs_to_keep=None):
+        """Initialize gSpan instance."""
         self._database_file_name = database_file_name
         self.graphs = dict()
         self._max_ngraphs = max_ngraphs
@@ -206,38 +232,43 @@ class gSpan(object):
         # Include subgraphs with
         # any num(but >= 2, <= max_num_vertices) of vertices.
         self._frequent_subgraphs = list()
+        self._projected_frequent_subgraphs = list()
         self._counter = itertools.count()
         self._verbose = verbose
         self._visualize = visualize
         self._where = where
         self.timestamps = dict()
+        self._graphs_to_keep = graphs_to_keep
         if self._max_num_vertices < self._min_num_vertices:
             print('Max number of vertices can not be smaller than '
                   'min number of that.\n'
                   'Set max_num_vertices = min_num_vertices.')
             self._max_num_vertices = self._min_num_vertices
         self._report_df = pd.DataFrame()
+        self._max_subgraphs = None
 
     def time_stats(self):
         """Print stats of time."""
-        func_names = ['_read_graphs', 'run']
+        func_names = ['_read_graphs', 'run', '_filter_subgraphs']
         time_deltas = collections.defaultdict(float)
         for fn in func_names:
-            time_deltas[fn] = round(
-                self.timestamps[fn + '_out'] - self.timestamps[fn + '_in'],
-                2
-            )
+            time_deltas[fn] = round(self.timestamps[fn + '_out'] - self.timestamps[fn + '_in'],2)
 
+        print('****************************')
+        print('Time Statistics')
         print('Read:\t{} s'.format(time_deltas['_read_graphs']))
-        print('Mine:\t{} s'.format(
-            time_deltas['run'] - time_deltas['_read_graphs']))
+        print('Gspan:\t{} s'.format(round(time_deltas['run'] - time_deltas['_read_graphs'] - time_deltas['_filter_subgraphs'],2)))
+        print('Filter:\t{} s'.format(time_deltas['_filter_subgraphs']))
         print('Total:\t{} s'.format(time_deltas['run']))
+        print('****************************')
 
         return self
 
     @record_timestamp
     def _read_graphs(self):
         self.graphs = dict()
+        self._total_num_nodes_in_graph_datasets = 0
+        self._total_num_edges_in_graph_datasets = 0
         with codecs.open(self._database_file_name, 'r', 'utf-8') as f:
             lines = [line.strip() for line in f.readlines()]
             tgraph, graph_cnt = None, 0
@@ -255,11 +286,17 @@ class gSpan(object):
                                    eid_auto_increment=True)
                 elif cols[0] == 'v':
                     tgraph.add_vertex(cols[1], cols[2])
+                    self._total_num_nodes_in_graph_datasets += 1
                 elif cols[0] == 'e':
                     tgraph.add_edge(AUTO_EDGE_ID, cols[1], cols[2], cols[3])
+                    self._total_num_edges_in_graph_datasets += 1
             # adapt to input files that do not end with 't # -1'
             if tgraph is not None:
                 self.graphs[graph_cnt] = tgraph
+
+            # Testing
+            self.graphs = reduce_graph_dataset(self.graphs, self._graphs_to_keep)
+            # EndTesting
         return self
 
     @record_timestamp
@@ -295,8 +332,9 @@ class gSpan(object):
             self._counter = itertools.count()
 
     @record_timestamp
+    # @profile # Uncomment if memory profiler is desired
     def run(self):
-        """Run the closeGraph algorithm."""
+        """Run the gSpan algorithm."""
         self._read_graphs()
         self._generate_1edge_frequent_subgraphs()
         if self._max_num_vertices < 2:
@@ -315,6 +353,16 @@ class gSpan(object):
             self._subgraph_mining(projected)
             self._DFScode.pop()
 
+        self._filter_subgraphs()
+
+    @record_timestamp
+    def _filter_subgraphs(self):
+        if(len(self._frequent_subgraphs) > 0):
+            self._max_subgraphs = filter_nonmaximal_subgraphs(self._frequent_subgraphs, self._projected_frequent_subgraphs)
+        else:
+            print("The total number of graphs found were: {}".format(0))
+            print("The total number of closed graphs found were: {}".format(0))
+
     def _get_support(self, projected):
         return len(set([pdfs.gid for pdfs in projected]))
 
@@ -324,9 +372,14 @@ class gSpan(object):
         print('\n-----------------\n')
 
     def _report(self, projected):
-        self._frequent_subgraphs.append(copy.copy(self._DFScode))
+        #Original
+        # self._frequent_subgraphs.append(copy.copy(self._DFScode))
+        # self._projected_frequent_subgraphs.append(projected)
         if self._DFScode.get_num_vertices() < self._min_num_vertices:
             return
+        #Naaz's Change -> collect subgraph only if the subgraph is larger than the min_num_vertices
+        self._frequent_subgraphs.append(copy.copy(self._DFScode))
+        self._projected_frequent_subgraphs.append(projected)
         g = self._DFScode.to_graph(gid=next(self._counter),
                                    is_undirected=self._is_undirected)
         display_str = g.display()
@@ -371,8 +424,8 @@ class gSpan(object):
                         g.vertices[e1.to].vlb <= g.vertices[e2.to].vlb):
                     return e
             else:
-                if g.vertices[e1.frm].vlb < g.vertices[e2.to].vlb or (
-                        g.vertices[e1.frm].vlb == g.vertices[e2.to].vlb and
+                if g.vertices[e1.frm].vlb < g.vertices[e2.to] or (
+                        g.vertices[e1.frm].vlb == g.vertices[e2.to] and
                         e1.elb <= e.elb):
                     return e
             # if e1.elb < e.elb or (e1.elb == e.elb and

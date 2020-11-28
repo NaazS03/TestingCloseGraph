@@ -136,15 +136,19 @@ class Graph(object):
             print('Can not plot graph: {}'.format(e))
             return
         gnx = nx.Graph() if self.is_undirected else nx.DiGraph()
-        vlbs = {vid: v.vlb for vid, v in self.vertices.items()}
+        # vlbs = {vid: v.vlb for vid, v in self.vertices.items()} #original code uses vlb
+        vlbs = {vid: v.vid for vid, v in self.vertices.items()} #modifed code uses vid
         elbs = {}
         for vid, v in self.vertices.items():
-            gnx.add_node(vid, label=v.vlb)
+            # gnx.add_node(vid, label=v.vlb) #original code - uses v label
+            gnx.add_node(vid, label=v.vid) #modified code - uses v id
         for vid, v in self.vertices.items():
             for to, e in v.edges.items():
                 if (not self.is_undirected) or vid < to:
-                    gnx.add_edge(vid, to, label=e.elb)
-                    elbs[(vid, to)] = e.elb
+                    # gnx.add_edge(vid, to, label=e.elb) #original code - uses e label
+                    gnx.add_edge(vid, to, label=e.eid) # modifed code - uses e id
+                    # elbs[(vid, to)] = e.elb #original code - uses e label
+                    elbs[(vid, to)] = e.eid #modified code - uses e id
         fsize = (min(16, 1 * len(self.vertices)),
                  min(16, 1 * len(self.vertices)))
         plt.figure(3, figsize=fsize)
