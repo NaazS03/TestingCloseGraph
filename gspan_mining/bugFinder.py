@@ -31,11 +31,14 @@ def reduce_graph_dataset(graphs, graphs_to_keep):
     """
     graphs_to_keep must only have graphids that are valid
     """
-    reduced_dataset = dict()
-    for graphId in graphs_to_keep:
-        reduced_dataset[graphId] = graphs[graphId]
+    if graphs_to_keep is None:
+        return graphs
+    else:
+        reduced_dataset = dict()
+        for graphId in graphs_to_keep:
+            reduced_dataset[graphId] = graphs[graphId]
 
-    return reduced_dataset
+        return reduced_dataset
 
 def run_cg(file_name, supp, min_size_graph, graphs_to_keep):
     from closegraph import closeGraph
